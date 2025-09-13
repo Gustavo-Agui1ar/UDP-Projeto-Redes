@@ -18,10 +18,17 @@ ssize_t ChromaProtocol::sendPacket(const Packet& pkt, const sockaddr_in& dest) {
 ssize_t ChromaProtocol::recvPacket(Packet& pkt) {
     socklen_t addrLen = sizeof(pkt.srcAddr);
     char buffer[1024];
-    ssize_t n = recvfrom(sockfd, buffer, sizeof(buffer), 0,
-                        (struct sockaddr*)&pkt.srcAddr, &addrLen);
+
+    ssize_t n = recvfrom(sockfd, buffer, sizeof(buffer), 0, (struct sockaddr*)&pkt.srcAddr, &addrLen);
+    
     if (n > 0) {
         pkt.data.assign(buffer, buffer + n);
     }
     return n;
+}
+
+bool isCorrupted(const Packet& pkt) {
+    int sum = 0;
+    for (auto c : pkt.data) sum += static_cast<int>(c);
+    return sum != pkt.checksum;
 }
