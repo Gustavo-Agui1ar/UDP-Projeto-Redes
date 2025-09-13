@@ -35,18 +35,12 @@ protected:
     vector<Packet> sendBuffer;
 
 public:
-    ChromaProtocol(int winSize, int bufSize)
-        : windowSize(winSize), bufferSize(bufSize),
-          base(0), nextSeqNum(0) 
-    {
-        sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-        if (sockfd < 0) throw runtime_error("Erro ao criar socket");
-        memset(&addr, 0, sizeof(addr));
-    }
 
-    virtual ~ChromaProtocol() {
-        close(sockfd);
-    }
+    ChromaProtocol(int winSize, int bufSize);
+    virtual ~ChromaProtocol();
+
+    ssize_t sendPacket(const Packet& pkt, const sockaddr_in& dest);
+    ssize_t recvPacket(Packet& pkt);
 
     virtual void sendData(const char* data, size_t len) = 0;
     virtual void receiveData() = 0;
