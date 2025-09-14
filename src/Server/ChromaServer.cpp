@@ -8,27 +8,38 @@ ChromaServer::ChromaServer(int winSize, int bufSize, sockaddr_in clientAddr, int
 {
     this->sockfd = sockfd; // Usar o socket já criado por ChromaProtocol?
     this->clientAddr = clientAddr;
+    timers = vector<Timer>(bufSize);
 }
 
 void ChromaServer::sendData(const char* filename, size_t chunkSize) {
     ifstream file(filename, ios::binary);
+    
     if (!file.is_open()) {
         cerr << "Erro ao abrir arquivo: " << filename << endl;
         return;
     }
 
-    int seqNum = 0;
     vector<char> buffer(chunkSize);
 
-    while ((nextSeqNum < base + windowSize) && (file.read(buffer.data(), chunkSize) || file.gcount() > 0)) {
+    while (base <= getNextSeqNum() && !file.eof())
+    {
+        while ((getNextSeqNum() < base + windowSize) && (file.read(buffer.data(), chunkSize) || file.gcount() > 0)) {
 
-        Packet pkt(seqNum++, buffer, ChromaMethod::POST);
-        sendBuffer[pkt.seqNum] = pkt;
+            Packet pkt(getNextSeqNum(), buffer, ChromaMethod::POST);
+            sendBuffer[pkt.seqNum] = pkt;
 
-        //sendPacket(pkt);
-        cout << "Servidor enviou pacote " << pkt.seqNum << " (" << file.gcount() << " bytes)" << endl;
+            cout << "Servidor enviou pacote " << pkt.seqNum << " (" << file.gcount() << " bytes)" << endl;
+            
+            timers[getNextSeqNum()].start(1000, [this, pkt]() {
+                cout << "Timeout seq " << pkt.seqNum << " -> retransmitindo\n";
+                sendPacket(pkt, clientAddr);
+            });
 
-        //adicionar janela deslizante e logica que impete o envio de mais pacotes que o tamanho da janela em sendPacket(pkt);
+            sendPacket(pkt, clientAddr);
+            nextSeqNum++;
+        }
+
+        receiveData();
     }
 
     file.close();
@@ -40,17 +51,23 @@ void ChromaServer::receiveData() {
 
     Packet pkt;
 
-    //Criar Timer para os packets
-
     if (recvPacket(pkt) > 0) {
         if (pkt.method == ChromaMethod::ACK && !isCorrupted(pkt)) {
             cout << "ACK recebido para seq: " << pkt.seqNum << endl;
             if(pkt.seqNum == base) 
-                base++;      
+                base++;
+            timers[pkt.seqNum].stop();      
         }
         else if (pkt.method == ChromaMethod::NACK) {
             cout << "NACK recebido para seq: " << pkt.seqNum << endl;
             sendPacket(sendBuffer[pkt.seqNum], clientAddr);
+
+            timers[pkt.seqNum].start(1000, [this, pkt]() {
+                cout << "Timeout seq " << pkt.seqNum << " -> retransmitindo\n";
+                sendPacket(sendBuffer[pkt.seqNum], clientAddr);
+            });
         }
     }
 }
+
+

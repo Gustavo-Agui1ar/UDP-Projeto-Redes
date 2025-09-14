@@ -1,9 +1,15 @@
 #include "ChromaProtocol.hpp"
+#include <iostream>
+
+using namespace std;
 
 ChromaProtocol::ChromaProtocol(int winSize, int bufSize) : windowSize(winSize), bufferSize(bufSize), base(0), nextSeqNum(0) 
 {
     sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0) throw runtime_error("Erro ao criar socket");
+
+    cout << "Socket criado com sucesso: " << sockfd << endl;
+
     memset(&addr, 0, sizeof(addr));
     sendBuffer = vector<Packet>(bufferSize);
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Protocol/ChromaProtocol.hpp"
+#include "../Protocol/Timer.hpp"
 #include <iostream>
 #include <fstream>
 #include <thread>
@@ -15,4 +16,5 @@ public:
 
 private:
     sockaddr_in clientAddr{};
+    vector<Timer> timers;
 };

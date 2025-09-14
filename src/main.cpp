@@ -4,9 +4,9 @@
 
 int main() {
 
-    int windowSize = 5; // Exemplo de tamanho da janela
-    int bufferSize = 1024; // Exemplo de tamanho do buffer
-    int port = 8080; // Porta do servidor
+    int windowSize = 5;
+    int bufferSize = 1024;
+    int port = 8080; 
 
     sockaddr_in clientAddr{};
     clientAddr.sin_family = AF_INET;

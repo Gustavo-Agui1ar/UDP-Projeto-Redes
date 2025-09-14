@@ -77,6 +77,7 @@ public:
     ssize_t recvPacket(Packet& pkt);
 
     bool isCorrupted(const Packet& pkt);
+    int getNextSeqNum() const { return nextSeqNum % bufferSize; }
 
     virtual void sendData(const char* data, size_t len) = 0;
     virtual void receiveData() = 0;
