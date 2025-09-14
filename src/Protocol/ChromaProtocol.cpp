@@ -5,9 +5,10 @@ ChromaProtocol::ChromaProtocol(int winSize, int bufSize) : windowSize(winSize), 
     sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0) throw runtime_error("Erro ao criar socket");
     memset(&addr, 0, sizeof(addr));
+    sendBuffer = vector<Packet>(bufferSize);
 }
 
-virtual ChromaProtocol::~ChromaProtocol() {
+ChromaProtocol::~ChromaProtocol() {
     close(sockfd);
 }
 
@@ -27,8 +28,9 @@ ssize_t ChromaProtocol::recvPacket(Packet& pkt) {
     return n;
 }
 
-bool isCorrupted(const Packet& pkt) {
-    int sum = 0;
-    for (auto c : pkt.data) sum += static_cast<int>(c);
-    return sum != pkt.checksum;
+bool ChromaProtocol::isCorrupted(const Packet& pkt) {
+
+    string sum = pkt.makeCheckSum(pkt.data);
+
+    return sum.compare(pkt.checksum) != 0;
 }

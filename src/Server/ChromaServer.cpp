@@ -4,64 +4,53 @@
 #include <fstream>
 #include <thread>
 
-class ChromaServer : public ChromaProtocol {
-public:
-    ChromaServer(int winSize, int bufSize, sockaddr_in clientAddr, int sockfd)
-        : ChromaProtocol(winSize, bufSize) 
-    {
-        this->sockfd = sockfd; // Usar o socket já criado por ChromaProtocol?
-        this->clientAddr = clientAddr;
+ChromaServer::ChromaServer(int winSize, int bufSize, sockaddr_in clientAddr, int sockfd): ChromaProtocol(winSize, bufSize) 
+{
+    this->sockfd = sockfd; // Usar o socket já criado por ChromaProtocol?
+    this->clientAddr = clientAddr;
+}
+
+void ChromaServer::sendData(const char* filename, size_t chunkSize) {
+    ifstream file(filename, ios::binary);
+    if (!file.is_open()) {
+        cerr << "Erro ao abrir arquivo: " << filename << endl;
+        return;
     }
 
-    void sendData(const char* filename, size_t chunkSize = 512) {
-        ifstream file(filename, ios::binary);
-        if (!file.is_open()) {
-            cerr << "Erro ao abrir arquivo: " << filename << endl;
-            return;
-        }
+    int seqNum = 0;
+    vector<char> buffer(chunkSize);
 
-        int seqNum = 0;
-        vector<char> buffer(chunkSize);
+    while ((nextSeqNum < base + windowSize) && (file.read(buffer.data(), chunkSize) || file.gcount() > 0)) {
 
-        while (file.read(buffer.data(), chunkSize) || file.gcount() > 0) {
-            size_t bytesRead = file.gcount();
+        Packet pkt(seqNum++, buffer, ChromaMethod::POST);
+        sendBuffer[pkt.seqNum] = pkt;
 
-            Packet pkt;
-            pkt.seqNum = seqNum++;
-            pkt.method = ChromaMethod::POST;
-            pkt.data.assign(buffer.begin(), buffer.begin() + bytesRead);
+        //sendPacket(pkt);
+        cout << "Servidor enviou pacote " << pkt.seqNum << " (" << file.gcount() << " bytes)" << endl;
 
-            sendPacket(pkt);
-            cout << "Servidor enviou pacote " << pkt.seqNum << " (" << bytesRead << " bytes)" << endl;
-
-            //adicionar janela deslizante e logica que impete o envio de mais pacotes que o tamanho da janela em sendPacket(pkt);
-        }
-
-        file.close();
-        cout << "Envio concluído: " << filename << endl;
+        //adicionar janela deslizante e logica que impete o envio de mais pacotes que o tamanho da janela em sendPacket(pkt);
     }
 
-    // Receber ACKs/NACKs do cliente
-    void receiveData() override {
+    file.close();
+    cout << "Envio concluído: " << filename << endl;
+}
 
-        Packet pkt;
+// Receber ACKs/NACKs do cliente
+void ChromaServer::receiveData() {
 
-        //Criar Timer para os packets
+    Packet pkt;
 
-        if (recvPacket(pkt) > 0) {
-            if (pkt.method == ChromaMethod::ACK && !isCorrupted(pkt)) {
-                cout << "ACK recebido para seq: " << pkt.seqNum << endl;
-                if(pkt.seqNum == base) 
-                    base++;      
-            }
-            else if (pkt.method == ChromaMethod::NACK) {
-                cout << "NACK recebido para seq: " << pkt.seqNum << endl;
-                sendPacket(sendBuffer[pkt.seqNum]);
-            }
+    //Criar Timer para os packets
+
+    if (recvPacket(pkt) > 0) {
+        if (pkt.method == ChromaMethod::ACK && !isCorrupted(pkt)) {
+            cout << "ACK recebido para seq: " << pkt.seqNum << endl;
+            if(pkt.seqNum == base) 
+                base++;      
+        }
+        else if (pkt.method == ChromaMethod::NACK) {
+            cout << "NACK recebido para seq: " << pkt.seqNum << endl;
+            sendPacket(sendBuffer[pkt.seqNum], clientAddr);
         }
     }
-
-private:
-
-    sockaddr_in clientAddr{};
-};
+}
