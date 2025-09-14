@@ -9,6 +9,8 @@
 #include <openssl/evp.h>
 #include <iomanip>
 #include <sstream>
+#include <string>
+#include <iostream> 
 
 using namespace std;
 
@@ -25,13 +27,15 @@ public:
     int seqNum;
     vector<char> data;
     ChromaMethod method;
+    bool received = false;
     string checksum;
+
     sockaddr_in srcAddr;
 
     Packet() : seqNum(0), method(ChromaMethod::UNKNOWN), checksum("") {}
-    Packet(int seq, const vector<char>& d, ChromaMethod m): seqNum(seq), data(d), method(m), checksum("") {  checksum = makeCheckSum(d); }
+    Packet(int seq, const vector<char>& d, ChromaMethod m, sockaddr_in& src): seqNum(seq), data(d), method(m), srcAddr(src), checksum("") {  checksum = makeCheckSum(d);}
 
-  string makeCheckSum(const vector<char>& data) const {
+    string makeCheckSum(const vector<char>& data) const {
         unsigned char hash[EVP_MAX_MD_SIZE];
         unsigned int hashLen = 0;
 
@@ -78,6 +82,7 @@ public:
 
     bool isCorrupted(const Packet& pkt);
     int getNextSeqNum() const { return nextSeqNum % bufferSize; }
+    bool waitResponse(int timeoutSec);
 
     virtual void sendData(const char* data, size_t len) = 0;
     virtual void receiveData() = 0;

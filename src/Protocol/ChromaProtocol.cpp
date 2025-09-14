@@ -1,5 +1,4 @@
 #include "ChromaProtocol.hpp"
-#include <iostream>
 
 using namespace std;
 
@@ -39,4 +38,17 @@ bool ChromaProtocol::isCorrupted(const Packet& pkt) {
     string sum = pkt.makeCheckSum(pkt.data);
 
     return sum.compare(pkt.checksum) != 0;
+}
+
+bool ChromaProtocol::waitResponse(int timeoutSec) {
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(sockfd, &fds);
+
+    struct timeval tv;
+    tv.tv_sec = timeoutSec;
+    tv.tv_usec = 0;
+
+    int ret = select(sockfd + 1, &fds, nullptr, nullptr, &tv);
+    return ret > 0;
 }
