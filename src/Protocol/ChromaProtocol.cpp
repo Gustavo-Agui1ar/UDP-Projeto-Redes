@@ -41,7 +41,7 @@ bool ChromaProtocol::isCorrupted(const Packet& pkt) {
 
     string sum = pkt.makeCheckSum(pkt.data);
 
-    return sum.compare(pkt.checksum) != 0;
+    return sum.compare(pkt.sha256) != 0;
 }
 
 bool ChromaProtocol::waitResponse(int timeoutSec) {

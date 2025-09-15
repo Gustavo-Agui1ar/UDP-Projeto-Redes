@@ -15,7 +15,6 @@
 #include <fstream>
 
 using namespace std;
-using namespace nlohmann;
 
 enum class ChromaMethod {
     UNKNOWN,
@@ -27,16 +26,17 @@ enum class ChromaMethod {
 
 class Packet {
 public:
-    int seqNum;
     vector<char> data;
+    
+    int seqNum;
     ChromaMethod method;
     bool received = false;
-    string checksum;
+    string sha256;
 
     sockaddr_in srcAddr;
 
-    Packet() : seqNum(0), method(ChromaMethod::UNKNOWN), checksum("") {}
-    Packet(int seq, const vector<char>& d, ChromaMethod m, sockaddr_in& src): seqNum(seq), data(d), method(m), srcAddr(src), checksum("") {  checksum = makeCheckSum(d);}
+    Packet() : seqNum(0), method(ChromaMethod::UNKNOWN), sha256("") {}
+    Packet(int seq, const vector<char>& d, ChromaMethod m, sockaddr_in& src): seqNum(seq), data(d), method(m), srcAddr(src), sha256("") {  sha256 = makeCheckSum(d);}
 
     string makeCheckSum(const vector<char>& data) const {
         unsigned char hash[EVP_MAX_MD_SIZE];
@@ -64,7 +64,7 @@ public:
     string toString() const {
         return to_string(seqNum) + "|" +
                to_string(static_cast<int>(method)) + "|" +
-               checksum + "|" +
+               sha256 + "|" +
                dataToString(data);
     }
 
@@ -78,7 +78,7 @@ public:
 
         seqNum = std::stoi(str.substr(0, pos1));
         method = static_cast<ChromaMethod>(std::stoi(str.substr(pos1 + 1, pos2 - pos1 - 1)));
-        checksum = str.substr(pos2 + 1, pos3 - pos2 - 1);
+        sha256 = str.substr(pos2 + 1, pos3 - pos2 - 1);
         std::string dataStr = str.substr(pos3 + 1);
         data = stringToData(dataStr);
     }
