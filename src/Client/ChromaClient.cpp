@@ -17,7 +17,7 @@ void ChromaClient::connectToServer(const char* ip, int port) {
     }
 
     connected = true;
-    std::cout << "Cliente conectado ao servidor " << ip << ": " << port << std::endl;
+    std::cout <<    "Cliente conectado ao servidor " << ip << ": " << port << std::endl;
 }
 
 void ChromaClient::disconnect() {
@@ -52,6 +52,10 @@ void ChromaClient::sendData(const char* data, size_t len) {
             return;
         }
 
+        if(pkt.method == ChromaMethod::ACK) {
+            std::cout << "Servidor pronto para enviar o arquivo." << std::endl;
+        }
+
         serverResponseAddr = pkt.srcAddr;
 
         std::cout << "Requisição enviada ao servidor host: "
@@ -63,6 +67,7 @@ void ChromaClient::sendData(const char* data, size_t len) {
     } else {
         cout << "Erro no select()" << endl;
     }
+    receiveData();
 }
 
 void ChromaClient::receiveData() {

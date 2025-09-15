@@ -18,7 +18,10 @@ ChromaProtocol::~ChromaProtocol() {
 }
 
 ssize_t ChromaProtocol::sendPacket(const Packet& pkt, const sockaddr_in& dest) {
-    return sendto(sockfd, pkt.data.data(), pkt.data.size(), 0, (struct sockaddr*)&dest, sizeof(dest));
+    
+    string jsonStr = pkt.toJson();
+
+    return sendto(sockfd, jsonStr.data(), jsonStr.size(), 0, (struct sockaddr*)&dest, sizeof(dest));
 }
 
 ssize_t ChromaProtocol::recvPacket(Packet& pkt) {
@@ -27,9 +30,10 @@ ssize_t ChromaProtocol::recvPacket(Packet& pkt) {
 
     ssize_t n = recvfrom(sockfd, buffer, sizeof(buffer), 0, (struct sockaddr*)&pkt.srcAddr, &addrLen);
     
-    if (n > 0) {
-        pkt.data.assign(buffer, buffer + n);
-    }
+    if (n <= 0) return n;
+
+    pkt = Packet::fromJson(string(buffer, n), pkt.srcAddr);
+
     return n;
 }
 

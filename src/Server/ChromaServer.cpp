@@ -5,10 +5,26 @@
 ChromaServer::ChromaServer(int winSize, int bufSize, sockaddr_in clientAddr): ChromaProtocol(winSize, bufSize) 
 {
     this->clientAddr = clientAddr;
-    timers = vector<Timer>(bufSize);
+    timers = std::vector<Timer>(bufSize);
+
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = 0;
+
+    if (bind(sockfd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        throw std::runtime_error("Erro ao bindar socket do servidor");
+    }
+
+    socklen_t len = sizeof(addr);
+    if (getsockname(sockfd, (struct sockaddr*)&addr, &len) < 0) {
+        throw std::runtime_error("Erro ao obter porta atribuída ao servidor");
+    }
+
+    std::cout << "Servidor rodando na porta: " << ntohs(addr.sin_port) << std::endl << "Com ip: " << inet_ntoa(addr.sin_addr) << std::endl;
 }
 
 void ChromaServer::sendData(const char* filename, size_t chunkSize) {
+    
     ifstream file(filename, ios::binary);
     
     if (!file.is_open()) {
@@ -18,6 +34,8 @@ void ChromaServer::sendData(const char* filename, size_t chunkSize) {
         sendPacket(pkt, clientAddr);
         return;
     }
+
+    Packet pkt = {0, vector<char>(), ChromaMethod::ACK, addr}; // Comfirmação de que o arquivo foi encontrado e será enviado
 
     vector<char> buffer(chunkSize);
 

@@ -11,8 +11,11 @@
 #include <sstream>
 #include <string>
 #include <iostream> 
+#include <arpa/inet.h>
+#include <nlohmann/json.hpp>
 
 using namespace std;
+using namespace nlohmann;
 
 enum class ChromaMethod {
     UNKNOWN,
@@ -56,6 +59,27 @@ public:
             ss << hex << setw(2) << setfill('0') << (int)hash[i];
         }
         return ss.str();
+    }
+
+    std::string toJson() const {
+        json j;
+        j["seqNum"] = seqNum;
+        j["method"] = static_cast<int>(method);
+        j["checksum"] = checksum;
+        j["data"] = std::string(data.begin(), data.end());
+        return j.dump();
+    }
+
+    static Packet fromJson(const std::string& str, const sockaddr_in& src) {
+        Packet pkt;
+        pkt.srcAddr = src;
+        json j = json::parse(str);
+        pkt.seqNum = j["seqNum"];
+        pkt.method = static_cast<ChromaMethod>(j["method"].get<int>());
+        pkt.checksum = j["checksum"];
+        std::string dataStr = j["data"];
+        pkt.data.assign(dataStr.begin(), dataStr.end());
+        return pkt;
     }
 
 };
