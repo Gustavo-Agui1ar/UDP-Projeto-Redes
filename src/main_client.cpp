@@ -12,7 +12,7 @@ int main() {
     std::string filename;
     char choice = 's';
 
-    while (choice == 's') {
+    while (choice == 's' && client.isConnected()) {
         std::cout << "Digite o nome do arquivo a ser solicitado: ";
         std::cin >> filename;
 

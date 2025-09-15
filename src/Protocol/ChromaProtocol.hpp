@@ -12,7 +12,6 @@
 #include <string>
 #include <iostream> 
 #include <arpa/inet.h>
-#include <nlohmann/json.hpp>
 #include <fstream>
 
 using namespace std;
@@ -62,25 +61,44 @@ public:
         return ss.str();
     }
 
-    std::string toJson() const {
-        json j;
-        j["seqNum"] = seqNum;
-        j["method"] = static_cast<int>(method);
-        j["checksum"] = checksum;
-        j["data"] = std::string(data.begin(), data.end());
-        return j.dump();
+    string toString() const {
+        return to_string(seqNum) + "|" +
+               to_string(static_cast<int>(method)) + "|" +
+               checksum + "|" +
+               dataToString(data);
     }
 
-    static Packet fromJson(const std::string& str, const sockaddr_in& src) {
-        Packet pkt;
-        pkt.srcAddr = src;
-        json j = json::parse(str);
-        pkt.seqNum = j["seqNum"];
-        pkt.method = static_cast<ChromaMethod>(j["method"].get<int>());
-        pkt.checksum = j["checksum"];
-        std::string dataStr = j["data"];
-        pkt.data.assign(dataStr.begin(), dataStr.end());
-        return pkt;
+    void fromString(const std::string& str, const sockaddr_in& src) {
+        
+        srcAddr = src;
+
+        size_t pos1 = str.find('|');
+        size_t pos2 = str.find('|', pos1 + 1);
+        size_t pos3 = str.find('|', pos2 + 1);
+
+        seqNum = std::stoi(str.substr(0, pos1));
+        method = static_cast<ChromaMethod>(std::stoi(str.substr(pos1 + 1, pos2 - pos1 - 1)));
+        checksum = str.substr(pos2 + 1, pos3 - pos2 - 1);
+        std::string dataStr = str.substr(pos3 + 1);
+        data = stringToData(dataStr);
+    }
+
+    static string dataToString(const std::vector<char>& data) {
+        ostringstream oss;
+        for (unsigned char c : data) {
+            oss << hex << setw(2) << setfill('0') << (int)c;
+        }
+        return oss.str();
+    }
+
+    static vector<char> stringToData(const string& s) {
+        vector<char> result;
+        for (size_t i = 0; i < s.length(); i += 2) {
+            string byteStr = s.substr(i, 2);
+            char byte = static_cast<char>(stoi(byteStr, nullptr, 16));
+            result.push_back(byte);
+        }
+        return result;
     }
 
 };
