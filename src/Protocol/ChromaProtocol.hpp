@@ -13,6 +13,7 @@
 #include <iostream> 
 #include <arpa/inet.h>
 #include <nlohmann/json.hpp>
+#include <fstream>
 
 using namespace std;
 using namespace nlohmann;
@@ -110,4 +111,9 @@ public:
 
     virtual void sendData(const char* data, size_t len) = 0;
     virtual void receiveData() = 0;
+
+    void sendConfirmation(int seqNum, ChromaMethod method, const sockaddr_in& dest) {
+        Packet pkt(seqNum, vector<char>(), method, addr);
+        sendPacket(pkt, dest);
+    }
 };
