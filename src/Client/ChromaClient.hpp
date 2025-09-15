@@ -9,6 +9,7 @@ private:
     sockaddr_in serverAddr;
     sockaddr_in serverResponseAddr;
     bool connected = false;
+    string extensionFile = "";
 
 public:
 
