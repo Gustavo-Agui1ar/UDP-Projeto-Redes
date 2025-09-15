@@ -23,7 +23,5 @@ public:
     bool isConnected() const { return connected; }
 
     void recreateFile(const char* filename);
-
-    void waitClientRequest(); 
 };
 

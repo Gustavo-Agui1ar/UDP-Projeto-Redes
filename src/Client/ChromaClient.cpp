@@ -114,21 +114,6 @@ void ChromaClient::receiveData() {
     recreateFile("arquivo_recebido.txt");
 }
 
-void ChromaClient::waitClientRequest() {
-    std::string filename;
-    char choice = 's';
-
-    while (choice == 's') {
-        std::cout << "Digite o nome do arquivo a ser solicitado: ";
-        std::cin >> filename;
-
-        sendData(filename.c_str(), filename.size());
-
-        std::cout << "Deseja solicitar outro arquivo? (s/n): ";
-        std::cin >> choice;
-    }
-}
-
 void ChromaClient::recreateFile(const char* filename) {
     ofstream file(filename, ios::binary);
     if (!file.is_open()) {
