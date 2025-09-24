@@ -25,7 +25,7 @@ target_link_libraries(udp_client PRIVATE OpenSSL::Crypto)
 add_executable(udp_manager
     src/main_manager.cpp
     src/Server/ChromaServer.cpp
-    src/Server/ChromaServerManager.cpp
+    src/Server/ChromaServiceHost.cpp
     ${PROTOCOL_SOURCES}
 )
 

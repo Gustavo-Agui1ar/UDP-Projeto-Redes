@@ -2,7 +2,7 @@
 
 #include "../Protocol/ChromaProtocol.hpp"
 
-class ChromaServerManager : public ChromaProtocol
+class ChromaServiceHost : public ChromaProtocol
 {
 private:
     sockaddr_in serverAddr;
@@ -11,8 +11,8 @@ private:
     int limitConnections;
 
 public:
-    ChromaServerManager(int winSize, int bufSize, int port = 8080);
-    ~ChromaServerManager();
+    ChromaServiceHost(int winSize, int bufSize, int port = 8080);
+    ~ChromaServiceHost();
 
     void start();
     void CreateServer(const char* ip, Packet pkt);

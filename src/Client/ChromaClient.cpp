@@ -1,10 +1,12 @@
 #include "ChromaClient.hpp"
 #include <arpa/inet.h>
-#include <iostream> 
-#include <fstream>  
+#include <iostream>
+#include <fstream>
+#include <sstream>
 
 using namespace std;
 
+// Cores para debug
 #define RESET   "\033[0m"
 #define RED     "\033[31m"
 #define GREEN   "\033[32m"
@@ -12,10 +14,9 @@ using namespace std;
 #define BLUE    "\033[34m"
 #define MAGENTA "\033[35m"
 #define CYAN    "\033[36m"
-#define WHITE   "\033[37m"
 
-
-ChromaClient::ChromaClient(int winSize, int bufSize): ChromaProtocol(winSize, bufSize) {}
+ChromaClient::ChromaClient(int winSize, int bufSize)
+    : ChromaProtocol(winSize, bufSize) {}
 
 ChromaClient::~ChromaClient() {
     disconnect();
@@ -27,132 +28,181 @@ void ChromaClient::connectToServer(const char* ip, int port) {
     serverAddr.sin_port = htons(port);
 
     if (inet_pton(AF_INET, ip, &serverAddr.sin_addr) <= 0) {
-        throw std::runtime_error(RED "Endereço inválido ou não suportado" RESET);
+        throw runtime_error(RED "Endereço inválido ou não suportado" RESET);
     }
 
     connected = true;
-    cout << GREEN << "Cliente conectado ao servidor " << ip << ": " << port << RESET << endl;
+    if (!quietMode) {
+        cout << GREEN << "Cliente conectado ao servidor " 
+             << ip << ":" << port << RESET << endl;
+    }
 }
 
 void ChromaClient::disconnect() {
-    if (connected) {
-        close(sockfd);
-        connected = false;
-        serverAddr = {};
-        serverResponseAddr = {};
+    if (!connected) return;
+
+    close(sockfd);
+    connected = false;
+    serverAddr = {};
+    serverResponseAddr = {};
+
+    if (!quietMode) {
         cout << YELLOW << "Cliente desconectado." << RESET << endl;
     }
 }
 
 void ChromaClient::sendData(const char* data, size_t len) {
-    std::string fileRequested(data, len);
-
+    string fileRequested(data, len);
     size_t pos = fileRequested.find_last_of('.');
-    if (pos != std::string::npos) {
-        extensionFile = fileRequested.substr(pos + 1); 
-    } else {
-        extensionFile = "bin"; 
+    extensionFile = (pos != string::npos) ? fileRequested.substr(pos + 1) : "bin";
+
+    if (!quietMode) {
+        cout << CYAN << "Solicitando arquivo: " << fileRequested << RESET << endl;
     }
 
-    cout << CYAN << "Enviando requisição ao Servidor..." << RESET << endl;
-    Packet pkt(0, std::vector<char>(data, data + len), ChromaMethod::GET, addr);
-
-    if (sendPacket(pkt, serverAddr) < 0) {
-        throw std::runtime_error(RED "Falha ao enviar requisição para o servidor" RESET);
+    Packet request(0, vector<char>(data, data + len), ChromaFlag::GET, addr);
+    if (sendPacket(request, serverAddr) < 0) {
+        throw runtime_error(RED "Falha ao enviar requisição para o servidor" RESET);
     }
+
+    if (!waitResponse(5)) {
+        if (!quietMode) cerr << RED << "Timeout aguardando resposta inicial." << RESET << endl;
+        return;
+    }
+
+    Packet pkt;
+    if (recvPacket(pkt) <= 0 || pkt.flag != ChromaFlag::ACK || isCorrupted(pkt)) {
+        if (!quietMode) cerr << RED << "Falha no handshake inicial." << RESET << endl;
+        return;
+    }
+
+    if (!quietMode) {
+        cout << GREEN << "Contato estabelecido com a thread do servidor." << RESET << endl;
+    }
+
+    serverResponseAddr = pkt.srcAddr;
+    readFileMetadata(pkt);
+
+    // Confirma recebimento dos metadados
+    Packet ackMeta(0, {}, ChromaFlag::ACK, addr);
+    sendPacket(ackMeta, serverResponseAddr);
+
+    // Prepara buffer para recebimento dos dados
+    sendBuffer.clear();
+    sendBuffer.resize(bufferSize);
+    base = 0;
+    nextSeqNum = 0;
 
     receiveData();
 }
 
+void ChromaClient::setQuietMode(bool quiet) {
+    quietMode = quiet;
+}
+
 void ChromaClient::receiveData() {
-    cout << CYAN << "Aguardando resposta do servidor e iniciando recepção..." << RESET << endl;
+    if (!quietMode) {
+        cout << CYAN << "Aguardando pacotes do servidor..." << RESET << endl;
+    }
+
     bool transmissionEnded = false;
-    bool initialContactMade = false;
+
+    ofstream file(("arquivo_reconstruido_" + filename + extensionFile).c_str(),ios::out | ios::binary);
+    if (!file.is_open()) {
+        throw runtime_error(RED "Erro ao criar arquivo de saída" RESET);
+    }
 
     while (!transmissionEnded) {
         Packet pkt;
 
-        if (waitResponse(10) > 0) { 
-            if (recvPacket(pkt) <= 0) {
-                cout << RED << "Erro ao receber pacote ou conexão encerrada." << RESET << endl;
-                return;
-            }
-        } else {
-            cout << RED << "Timeout: Nenhum pacote recebido do servidor dentro do tempo limite." << RESET << endl;
-            return;
-        }
-
-        if (!initialContactMade) {
-            serverResponseAddr = pkt.srcAddr;
-            initialContactMade = true;
-            cout << GREEN << "Contato estabelecido com a thread do servidor." << RESET << endl;
+        if (!waitResponse(10) || recvPacket(pkt) <= 0) {
+            if (!quietMode) cerr << RED << "Timeout ou erro de recepção." << RESET << endl;
+            break;
         }
 
         if (isCorrupted(pkt)) {
-            cout << YELLOW << "Pacote corrompido recebido, ignorando..." << RESET << endl;
+            if (!quietMode) cerr << YELLOW << "Pacote corrompido descartado." << RESET << endl;
             continue;
         }
 
-        switch (pkt.method) {
-            case ChromaMethod::POST:
-                if (pkt.seqNum >= base && pkt.seqNum < base + windowSize)
-                {
-                    if (pkt.seqNum > base) 
-                    {
-                        cout << YELLOW << "Pacote recebido fora de ordem: " << pkt.seqNum << RESET << endl;
-                    } else 
-                    { 
-                        cout << GREEN << "Pacote recebido na ordem correta: " << pkt.seqNum << RESET << endl;
-                        base++;
-                        while(base < bufferSize && sendBuffer[base].received)
-                        {
-                            base++;
-                        }
+        switch (pkt.flag) {
+            case ChromaFlag::DATA: {
+                int idx = pkt.seqNum % bufferSize;
+
+                if (sendBuffer[idx].received) {
+                    if (!quietMode) {
+                        cout << MAGENTA << "Pacote duplicado Seq=" << pkt.seqNum 
+                             << " → reenviando ACK." << RESET << endl;
                     }
-                    sendBuffer[pkt.seqNum] = pkt;
-                    sendBuffer[pkt.seqNum].received = true;
+                    sendConfirmation(pkt.seqNum, ChromaFlag::ACK, serverResponseAddr);
+                    break;
                 }
-                sendConfirmation(pkt.seqNum, ChromaMethod::ACK, serverResponseAddr);
-                break;
 
-            case ChromaMethod::ACK:
-                cout << GREEN << "Fim de transmissão recebido do servidor." << RESET << endl;
+                sendBuffer[idx] = pkt;
+                sendBuffer[idx].received = true;
+
+                if (!quietMode) {
+                    cout << BLUE << "Pacote Seq=" << pkt.seqNum 
+                         << " (" << pkt.data.size() << " bytes) recebido." << RESET << endl;
+                }
+
+                // Escreve em ordem os pacotes confirmados
+                while (sendBuffer[base % bufferSize].received && base < totalPackets) {
+                    Packet& inOrder = sendBuffer[base % bufferSize];
+                    file.write(inOrder.data.data(), inOrder.data.size());
+                    inOrder.received = false;
+                    base++;
+                }
+
+                sendConfirmation(pkt.seqNum, ChromaFlag::ACK, serverResponseAddr);
+                break;
+            }
+
+            case ChromaFlag::ACK:
+                if (!quietMode) cout << GREEN << "Fim de transmissão." << RESET << endl;
                 transmissionEnded = true;
                 break;
 
-            case ChromaMethod::NACK:
-                cerr << RED << "Servidor não conseguiu localizar o arquivo solicitado." << RESET << endl;
+            case ChromaFlag::NACK:
+                if (!quietMode) cerr << RED << "Servidor não encontrou o arquivo." << RESET << endl;
                 transmissionEnded = true;
-                sendBuffer.clear();
                 break;
 
             default:
-                cout << YELLOW << "Método desconhecido recebido, ignorando..." << RESET << endl;
+                if (!quietMode) cerr << YELLOW << "Flag desconhecida ignorada." << RESET << endl;
                 break;
         }
     }
 
-    if (!sendBuffer.empty()) {
-        cout << GREEN << "Recepção concluída." << RESET << endl;
-        recreateFile(("arquivo_recebido." + extensionFile).c_str());
-    } else {
-        cout << YELLOW << "Recepção finalizada sem dados para gravar." << RESET << endl;
+    file.flush();
+    file.close();
+    if (!quietMode) {
+        cout << GREEN << "Arquivo salvo com sucesso!" << RESET << endl;
     }
 }
 
-void ChromaClient::recreateFile(const char* filename) {
-    ofstream file(filename, ios::binary);
-    if (!file.is_open()) {
-        throw std::runtime_error(RED "Erro ao criar arquivo: " + std::string(filename) + RESET);
+void ChromaClient::readFileMetadata(const Packet& pkt) {
+    string dataStr(pkt.data.begin(), pkt.data.end());
+    istringstream iss(dataStr);
+    string fname, ext, sizeStr, totalStr;
+
+    if (!getline(iss, fname, '\0') ||
+        !getline(iss, ext, '\0') ||
+        !getline(iss, sizeStr, '\0') ||
+        !getline(iss, totalStr, '\0')) {
+        throw runtime_error(RED "Erro ao interpretar metadados." RESET);
     }
 
-    cout << CYAN << "Recriando o arquivo como '" << filename << "'..." << RESET << endl;
-    for (size_t i = 0; i < base; ++i) {
-        if (sendBuffer[i].received) {
-             file.write(sendBuffer[i].data.data(), sendBuffer[i].data.size());
-        }
-    }
+    filename = fname.substr(0, fname.find_last_of('.'));
+    extensionFile = ext;
+    fileSize = stoll(sizeStr);
+    totalPackets = stoi(totalStr);
 
-    file.close();
-    cout << GREEN << "Arquivo recriado com sucesso!" << RESET << endl;
+    if (!quietMode) {
+        cout << GREEN << "Metadados recebidos:" << RESET << endl;
+        cout << "Arquivo: " << filename << endl;
+        cout << "Extensão: " << extensionFile << endl;
+        cout << "Tamanho: " << fileSize << " bytes" << endl;
+        cout << "Pacotes esperados: " << totalPackets << endl;
+    }
 }

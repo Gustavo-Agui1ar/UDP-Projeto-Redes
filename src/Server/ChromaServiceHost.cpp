@@ -1,7 +1,7 @@
-#include "ChromaServerManager.hpp"
+#include "ChromaServiceHost.hpp"
 #include "ChromaServer.hpp"
 
-ChromaServerManager::ChromaServerManager(int winSize, int bufSize, int port) : ChromaProtocol(winSize, bufSize), running(false), serverPort(port), limitConnections(5)
+ChromaServiceHost::ChromaServiceHost(int winSize, int bufSize, int port) : ChromaProtocol(winSize, bufSize), running(false), serverPort(port), limitConnections(5)
 {
     addr.sin_family = AF_INET;
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
@@ -17,20 +17,20 @@ ChromaServerManager::ChromaServerManager(int winSize, int bufSize, int port) : C
         throw std::runtime_error("Erro ao obter porta atribuída ao gerenciador de requisições");
     }
 
-    std::cout << "ChromaServerManager rodando na porta: " << ntohs(addr.sin_port) << std::endl << "Com ip: " << inet_ntoa(addr.sin_addr) << std::endl;
+    std::cout << "ChromaServiceHost rodando na porta: " << ntohs(addr.sin_port) << std::endl << "Com ip: " << inet_ntoa(addr.sin_addr) << std::endl;
 }
 
-ChromaServerManager::~ChromaServerManager() {
+ChromaServiceHost::~ChromaServiceHost() {
     StopServer();
 }
     
-void ChromaServerManager::start() {
+void ChromaServiceHost::start() {
     running = true;
     while (running)
     {
         Packet pkt;
 
-        cout << "Aguardando requisição de cliente..." << std::endl;
+        std::cout << "Aguardando requisição de cliente..." << std::endl;
         
         if (recvPacket(pkt) < 0) {
             std::cerr << "Erro ao receber pacote" << std::endl;
@@ -48,14 +48,14 @@ void ChromaServerManager::start() {
     }
 }
 
-void ChromaServerManager::CreateServer(const char* ip, Packet pkt) {
+void ChromaServiceHost::CreateServer(const char* ip, Packet pkt) {
     std::thread([this, pkt]()
     {
         try 
         {
             ChromaServer server(windowSize, bufferSize, pkt.srcAddr);
 
-            server.sendData(std::string(pkt.data.begin(), pkt.data.end()).c_str());
+            server.sendData(std::string(pkt.data.begin(), pkt.data.end()).c_str(), 1000);
 
         } catch (const std::exception& e)
         {
@@ -64,11 +64,11 @@ void ChromaServerManager::CreateServer(const char* ip, Packet pkt) {
     }).detach();
 }
 
-void ChromaServerManager::StopServer()
+void ChromaServiceHost::StopServer()
 {
     if (running) {
         running = false;
         close(sockfd);
-        std::cout << "ChromaServerManager parado." << std::endl;
+        std::cout << "ChromaServiceHost parado." << std::endl;
     }
 }

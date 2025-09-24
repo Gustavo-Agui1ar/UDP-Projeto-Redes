@@ -6,11 +6,13 @@
 int main() {
 
 
-    ChromaClient client(5, 1024);
+    ChromaClient client(5, 10000);
     client.connectToServer("127.0.0.1", 8080);
     
     std::string filename;
     char choice = 's';
+
+    client.setQuietMode(false);
 
     while (choice == 's' && client.isConnected()) {
         std::cout << "Digite o nome do arquivo a ser solicitado: ";

@@ -1,3 +1,5 @@
+#pragma once
+
 #include <thread>
 #include <chrono>
 #include <atomic>
@@ -8,8 +10,8 @@ class Timer {
 
 private:
     
-    atomic<bool> running{false};
-    thread worker;
+    std::atomic<bool> running{false};
+    std::thread worker;
 
 public:
 
@@ -19,13 +21,13 @@ public:
         stop();
     }
 
-    void start(int intervalMs, function<void()> callback) {
+    void start(int intervalMs, std::function<void()> callback) {
         stop(); 
         running = true;
 
-        worker = thread([=]() mutable {
+        worker = std::thread([=]() mutable {
             while (running) {
-                this_thread::sleep_for(chrono::milliseconds(intervalMs));
+                std::this_thread::sleep_for(std::chrono::milliseconds(intervalMs));
                 if (running) callback();
             }
         });

@@ -1,12 +1,12 @@
 #include <iostream>
-#include "Server/ChromaServerManager.hpp"
+#include "Server/ChromaServiceHost.hpp"
 
 int main() {
     int windowSize = 5;
-    int bufferSize = 1024;
+    int bufferSize = 20;
     int port = 8080;
 
-    ChromaServerManager serverManager(windowSize, bufferSize, port);
+    ChromaServiceHost serverManager(windowSize, bufferSize, port);
     serverManager.start();
 
     return 0;

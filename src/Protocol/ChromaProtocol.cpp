@@ -1,47 +1,60 @@
 #include "ChromaProtocol.hpp"
 
-using namespace std;
+#include <cerrno>
+#include <cstring>
+#include <iostream>
+#include <stdexcept>
+#include <vector>
 
-ChromaProtocol::ChromaProtocol(int winSize, int bufSize) : windowSize(winSize), bufferSize(bufSize), base(0), nextSeqNum(0) 
+ChromaProtocol::ChromaProtocol(int winSize, int bufSize) 
+    : windowSize(winSize), bufferSize(bufSize), base(0), nextSeqNum(0), sendBuffer(bufSize) 
 {
-    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sockfd < 0) throw runtime_error("Erro ao criar socket");
+    sockfd = ::socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
+        throw std::runtime_error("Erro ao criar socket: " + std::string(std::strerror(errno)));
+    }
 
-    cout << "Socket criado com sucesso: " << sockfd << endl;
-
-    memset(&addr, 0, sizeof(addr));
-    sendBuffer = vector<Packet>(bufferSize);
+    std::cout << "[ChromaProtocol] Socket criado com sucesso (fd=" << sockfd << ")\n";
+    std::memset(&addr, 0, sizeof(addr));
 }
 
 ChromaProtocol::~ChromaProtocol() {
-    close(sockfd);
+    if (sockfd >= 0) {
+        ::close(sockfd);
+        std::cout << "[ChromaProtocol] Socket fechado (fd=" << sockfd << ")\n";
+    }
 }
 
 ssize_t ChromaProtocol::sendPacket(const Packet& pkt, const sockaddr_in& dest) {
-    
-    string jsonStr = pkt.toString();
-
-    return sendto(sockfd, jsonStr.data(), jsonStr.size(), 0, (struct sockaddr*)&dest, sizeof(dest));
+    auto buffer = pkt.serialize();
+    ssize_t sent = ::sendto(sockfd, buffer.data(), buffer.size(), 0,
+                            reinterpret_cast<const sockaddr*>(&dest), sizeof(dest));
+    if (sent < 0) {
+        std::cerr << "[ChromaProtocol] Erro em sendto(): " << std::strerror(errno) << "\n";
+    }
+    return sent;
 }
 
 ssize_t ChromaProtocol::recvPacket(Packet& pkt) {
+    std::vector<char> buffer(UDP_MAX_PAYLOAD);
     socklen_t addrLen = sizeof(pkt.srcAddr);
-    char buffer[1024];
 
-    ssize_t n = recvfrom(sockfd, buffer, sizeof(buffer), 0, (struct sockaddr*)&pkt.srcAddr, &addrLen);
-    
-    if (n <= 0) return n;
+    ssize_t received = ::recvfrom(sockfd, buffer.data(), buffer.size(), 0, reinterpret_cast<sockaddr*>(&pkt.srcAddr), &addrLen);
+    if (received <= 0) {
+        if (received < 0) {
+            std::cerr << "[ChromaProtocol] Erro em recvfrom(): " << std::strerror(errno) << "\n";
+        }
+        return received;
+    }
 
-    pkt.fromString(string(buffer, n), pkt.srcAddr);
+    try {
+        pkt.deserialize({buffer.begin(), buffer.begin() + received}, pkt.srcAddr);
+    } catch (const std::runtime_error& e) {
+        std::cerr << "[ChromaProtocol] Falha ao desserializar pacote: " << e.what() << " (bytes recebidos=" << received << ")\n";
+        return -1;
+    }
 
-    return n;
-}
-
-bool ChromaProtocol::isCorrupted(const Packet& pkt) {
-
-    string sum = pkt.makeCheckSum(pkt.data);
-
-    return sum.compare(pkt.sha256) != 0;
+    return received;
 }
 
 bool ChromaProtocol::waitResponse(int timeoutSec) {
@@ -49,10 +62,11 @@ bool ChromaProtocol::waitResponse(int timeoutSec) {
     FD_ZERO(&fds);
     FD_SET(sockfd, &fds);
 
-    struct timeval tv;
-    tv.tv_sec = timeoutSec;
-    tv.tv_usec = 0;
+    timeval tv{timeoutSec, 0};
+    int ret = ::select(sockfd + 1, &fds, nullptr, nullptr, &tv);
 
-    int ret = select(sockfd + 1, &fds, nullptr, nullptr, &tv);
+    if (ret < 0) {
+        throw std::runtime_error("Erro em select(): " + std::string(std::strerror(errno)));
+    }
     return ret > 0;
 }
