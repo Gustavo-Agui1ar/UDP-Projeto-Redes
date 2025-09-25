@@ -1,7 +1,7 @@
 #include "ChromaServiceHost.hpp"
 #include "ChromaServer.hpp"
 
-ChromaServiceHost::ChromaServiceHost(int winSize, int bufSize, int port) : ChromaProtocol(winSize, bufSize), running(false), serverPort(port), limitConnections(5)
+ChromaServiceHost::ChromaServiceHost(int winSize, int port) : ChromaProtocol(winSize), running(false), serverPort(port), limitConnections(5)
 {
     addr.sin_family = AF_INET;
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
@@ -53,7 +53,7 @@ void ChromaServiceHost::CreateServer(const char* ip, Packet pkt) {
     {
         try 
         {
-            ChromaServer server(windowSize, bufferSize, pkt.srcAddr);
+            ChromaServer server(windowSize, pkt.srcAddr);
 
             server.sendData(std::string(pkt.data.begin(), pkt.data.end()).c_str(), 1000);
 

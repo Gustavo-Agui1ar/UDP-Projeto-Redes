@@ -2,8 +2,8 @@
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
-#include <openssl/evp.h>
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <unistd.h>
 
 #include <array>
@@ -17,9 +17,14 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <map>
+#include <cerrno>
+
+#define WINDOW_SIZE 127
+#define BUFFER_SIZE 256
 
 constexpr size_t UDP_MAX_PAYLOAD = 1472;      // 1500 - 20 (IP) - 8 (UDP)
-constexpr size_t CHROMA_HEADER_SIZE = 13;     // seq(4) + flag(1) + dsize(4) + checksum(4)
+constexpr size_t CHROMA_HEADER_SIZE = 10;     // seq(1) + flag(1) + dsize(4) + checksum(4)
 constexpr size_t CHROMA_MAX_DATA = UDP_MAX_PAYLOAD - CHROMA_HEADER_SIZE;
 
 enum class ChromaFlag : uint8_t {
@@ -27,31 +32,32 @@ enum class ChromaFlag : uint8_t {
     GET,
     DATA,
     ACK,
-    NACK
+    NACK,
+    END,
+    META
 };
 
 class Packet {
 public:
-    int seqNum{0};
+    uint8_t seqNum{0};
     ChromaFlag flag{ChromaFlag::UNKNOWN};
-    bool received{false};
     uint32_t checksum{0};             
     std::vector<char> data;
     sockaddr_in srcAddr{};
 
     Packet() = default;
 
-    Packet(int seq, const std::vector<char>& d, ChromaFlag f, const sockaddr_in& src)
+    Packet(uint8_t seq, const std::vector<char>& d, ChromaFlag f, sockaddr_in src = {})
         : seqNum(seq), flag(f), data(d), srcAddr(src) {
         checksum = computeChecksum(data);
+        std::memset(&srcAddr, 0, sizeof(srcAddr));
     }
 
-    [[nodiscard]] std::vector<char> serialize() const {// tamanho total do header = 13 bytes
+    [[nodiscard]] std::vector<char> serialize() const {
         std::vector<char> buffer;
 
-        // seqNum (4 bytes)
-        uint32_t seq = htonl(static_cast<uint32_t>(seqNum));
-        appendToBuffer(buffer, &seq, sizeof(seq));
+        // seqNum (1 byte)
+        buffer.push_back(static_cast<char>(seqNum));
 
         // flag (1 byte)
         buffer.push_back(static_cast<char>(flag));
@@ -64,29 +70,29 @@ public:
         uint32_t chk = htonl(checksum);
         appendToBuffer(buffer, &chk, sizeof(chk));
 
-        // dados (entre 0 e CHROMA_MAX_DATA bytes)
+        // dados
         buffer.insert(buffer.end(), data.begin(), data.end());
 
         return buffer;
     }
 
     void deserialize(const std::vector<char>& buffer, const sockaddr_in& src) {
-        srcAddr = src;
+        srcAddr = src; // Store source address
+        
         size_t offset = 0;
 
-        constexpr size_t headerSize = sizeof(uint32_t) + 1 + sizeof(uint32_t) + sizeof(uint32_t);
+        constexpr size_t headerSize = 1 + 1 + sizeof(uint32_t) + sizeof(uint32_t);
         if (buffer.size() < headerSize) {
             throw std::runtime_error("Buffer menor que cabeçalho mínimo");
         }
 
         // seqNum
-        uint32_t seq_n{};
-        std::memcpy(&seq_n, buffer.data() + offset, sizeof(seq_n));
-        seqNum = ntohl(seq_n);
-        offset += sizeof(seq_n);
+        seqNum = static_cast<uint8_t>(buffer[offset]);
+        offset += sizeof(seqNum);
 
         // flag
-        flag = static_cast<ChromaFlag>(static_cast<unsigned char>(buffer[offset++]));
+        flag = static_cast<ChromaFlag>(static_cast<unsigned char>(buffer[offset]));
+        offset += sizeof(flag);
 
         // tamanho dos dados
         uint32_t dsize_n{};
@@ -132,15 +138,15 @@ protected:
     int sockfd{-1};
     sockaddr_in addr{};
 
-    int windowSize{0};
-    int bufferSize{0};
-    int base{0};
-    int nextSeqNum{0};
+    uint8_t windowSize{0};
+    uint8_t bufferSize{0};
+    uint8_t base{0};
+    uint8_t nextSeqNum{0};
 
-    std::vector<Packet> sendBuffer;
+    std::map<uint8_t, Packet> bufferPackets;
 
 public:
-    ChromaProtocol(int winSize, int bufSize);
+    ChromaProtocol(int winSize);
     virtual ~ChromaProtocol();
 
     ssize_t sendPacket(const Packet& pkt, const sockaddr_in& dest);
@@ -150,14 +156,27 @@ public:
         return pkt.checksum != Packet::computeChecksum(pkt.data);
     }
 
-    [[nodiscard]] int getNextSeqNum() const { return nextSeqNum % bufferSize; }
+    [[nodiscard]] uint8_t getNextSeqNum() const { return nextSeqNum; }
+    [[nodiscard]] uint8_t getBase() const { return base; }
+    [[nodiscard]] int getWindowSize() const { return windowSize; }
+    
     bool waitResponse(int timeoutSec);
+
+    void sendConfirmation(uint8_t seqNum, ChromaFlag flag, const sockaddr_in& dest) {
+        Packet pkt(seqNum, {}, flag);
+        if (sendPacket(pkt, dest) < 0) {
+            std::cerr << "[ChromaProtocol] Erro ao enviar confirmação" << std::endl;
+        }
+    }
+
+    bool isSeqInWindow(uint8_t seq, uint8_t base) const {
+        return static_cast<uint8_t>(seq - base) < windowSize;
+    }
+    uint8_t getSeqDistance(uint8_t from, uint8_t to) const {
+        return static_cast<uint8_t>(to - from);
+    }
 
     virtual void sendData(const char* data, size_t len) = 0;
     virtual void receiveData() = 0;
-
-    void sendConfirmation(int seqNum, ChromaFlag flag, const sockaddr_in& dest) {
-        Packet pkt(seqNum, {}, flag, addr);
-        sendPacket(pkt, dest);
-    }
 };
+

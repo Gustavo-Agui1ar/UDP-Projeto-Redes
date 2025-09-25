@@ -2,11 +2,10 @@
 #include "Server/ChromaServiceHost.hpp"
 
 int main() {
-    int windowSize = 5;
-    int bufferSize = 20;
+    int windowSize = WINDOW_SIZE;
     int port = 8080;
 
-    ChromaServiceHost serverManager(windowSize, bufferSize, port);
+    ChromaServiceHost serverManager(windowSize, port);
     serverManager.start();
 
     return 0;

@@ -2,17 +2,17 @@
 #include <fstream>
 #include <fcntl.h>
 #include <cmath>
+#include <iostream>
 
 using namespace std;
 
-ChromaServer::ChromaServer(int winSize, int bufSize, const sockaddr_in& clientAddr)
-    : ChromaProtocol(winSize, bufSize), clientAddr(clientAddr), timers(bufSize) 
+ChromaServer::ChromaServer(int winSize, const sockaddr_in& clientAddr)
+    : ChromaProtocol(winSize), clientAddr(clientAddr)
 {
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = 0;
 
-    // Coloca socket em modo não-bloqueante
     int flags = fcntl(sockfd, F_GETFL, 0);
     fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
 
@@ -25,142 +25,135 @@ ChromaServer::ChromaServer(int winSize, int bufSize, const sockaddr_in& clientAd
         throw runtime_error("Erro ao obter porta atribuída ao servidor");
     }
 
-    cout << "Servidor rodando na porta: " << ntohs(addr.sin_port)
+    cout << "[ChromaServer] Rodando na porta " << ntohs(addr.sin_port)
          << " | IP: " << inet_ntoa(addr.sin_addr) << endl;
 }
 
 ChromaServer::~ChromaServer() {
-    cout << "Encerrando o servidor. Parando todos os timers..." << endl;
-    for (auto& timer : timers) {
-        timer.stop();
-    }
+    cout << "[ChromaServer] Encerrando servidor, limpando timers..." << endl;
+    timers.clear();
 }
 
 void ChromaServer::sendData(const char* filename, size_t chunkSize) {
-    
-    if (chunkSize == 0) {
+    if (chunkSize == 0 || chunkSize > CHROMA_MAX_DATA) {
+        cerr << "[ChromaServer] chunkSize inválido. Ajustando para " << CHROMA_MAX_DATA << endl;
         chunkSize = CHROMA_MAX_DATA;
     }
-    if (chunkSize > CHROMA_MAX_DATA) {
-        cerr << "[ChromaServer] Aviso: chunkSize (" << chunkSize << ") maior que CHROMA_MAX_DATA ("
-             << CHROMA_MAX_DATA << "). Ajustando para " << CHROMA_MAX_DATA << "." << endl;
-        chunkSize = CHROMA_MAX_DATA;
-    }
-    
+
     ifstream file(filename, ios::in | ios::binary);
     if (!file.is_open()) {
-        cerr << "Erro ao abrir arquivo: " << filename << endl;
+        cerr << "[ChromaServer] Erro ao abrir arquivo: " << filename << endl;
         Packet nack(0, {}, ChromaFlag::NACK, addr);
         sendPacket(nack, clientAddr);
         return;
     }
 
-    sendPacket(makeMetaDataPacket(filename, file, chunkSize), clientAddr);
+    Packet meta = makeMetaDataPacket(filename, file, chunkSize);
+    sendPacket(meta, clientAddr);
 
     if (!waitResponse(5)) {
-        cerr << "Timeout esperando ACK do cliente para metadados." << endl;
+        cerr << "[ChromaServer] Timeout aguardando ACK de metadados." << endl;
         return;
     }
 
     Packet ackMeta;
     if (recvPacket(ackMeta) <= 0 || ackMeta.flag != ChromaFlag::ACK || isCorrupted(ackMeta)) {
-        cerr << "Falha ao receber ACK válido do cliente." << endl;
+        cerr << "[ChromaServer] Falha ao receber ACK válido de metadados." << endl;
         return;
     }
 
     bool finishedReading = false;
     while (!finishedReading || base < nextSeqNum) {
-        while (nextSeqNum < base + windowSize && !finishedReading) {
+        while ((uint8_t)(nextSeqNum - base) < windowSize && !finishedReading) {
             vector<char> buffer(chunkSize);
             file.read(buffer.data(), chunkSize);
             streamsize bytesRead = file.gcount();
 
             if (bytesRead > 0) {
                 buffer.resize(bytesRead);
-                int idx = nextSeqNum % bufferSize;
+                Packet pkt(static_cast<uint8_t>(nextSeqNum), buffer, ChromaFlag::DATA, addr);
 
-                Packet pkt(nextSeqNum, buffer, ChromaFlag::DATA, addr);
-                sendBuffer[idx] = pkt;
-                sendBuffer[idx].received = false;
+                bufferPackets[pkt.seqNum] = pkt;
 
-                cout << "Servidor enviou pacote " << pkt.seqNum << " (" << bytesRead << " bytes)" << endl;
+                cout << "[ChromaServer] Enviando pacote "
+                     << static_cast<int>(pkt.seqNum) << " (" << bytesRead << " bytes)" << endl;
 
-                setTimerAndSendPacket(pkt, 50, clientAddr);
+                setTimerAndSendPacket(pkt, 200, clientAddr);
                 nextSeqNum++;
             }
 
-            if (file.eof()) {
-                finishedReading = true;
-            }
+            if (file.eof()) finishedReading = true;
         }
 
-        receiveData(); 
+        receiveData();
     }
 
     file.close();
 
-    Packet endPkt(-1, {}, ChromaFlag::ACK, addr);
+    // Pacote final com flag de encerramento
+    Packet endPkt(0, {}, ChromaFlag::END, addr);
     sendPacket(endPkt, clientAddr);
-    cout << "Arquivo enviado com sucesso!" << endl;
+    cout << "[ChromaServer] Arquivo enviado com sucesso!" << endl;
 }
 
 void ChromaServer::receiveData() {
     Packet pkt;
     while (recvPacket(pkt) > 0) {
-        if (pkt.flag == ChromaFlag::ACK && !isCorrupted(pkt)) {
-            int idx = pkt.seqNum % bufferSize;
-            timers[idx].stop();
-            sendBuffer[idx].received = true;
+        if (isCorrupted(pkt)) {
+            cerr << "[ChromaServer] Pacote corrompido ignorado." << endl;
+            continue;
+        }
 
-            cout << "ACK recebido para seq: " << pkt.seqNum << endl;
+        if (pkt.flag == ChromaFlag::ACK) {
+            int seq = static_cast<int>(pkt.seqNum);
+            cout << "[ChromaServer] ACK recebido para seq " << seq << endl;
+
+            if (timers.count(pkt.seqNum)) {
+                timers[pkt.seqNum].stop();
+                timers.erase(pkt.seqNum);
+            }
 
             if (pkt.seqNum == base) {
-                while (base < nextSeqNum && sendBuffer[base % bufferSize].received) {
+                while (bufferPackets.count(base)) {
+                    bufferPackets.erase(base);
                     base++;
                 }
             }
         } else if (pkt.flag == ChromaFlag::NACK) {
-            cout << "NACK recebido para seq: " << pkt.seqNum << endl;
+            cout << "[ChromaServer] NACK recebido para seq "
+                 << static_cast<int>(pkt.seqNum) << endl;
         }
     }
 }
 
 void ChromaServer::setTimerAndSendPacket(const Packet& pkt, int timeoutMs, const sockaddr_in& dest) {
-    int idx = pkt.seqNum % bufferSize;
-
-    if (idx < 0 || idx >= static_cast<int>(timers.size())) {
-        cerr << "Índice inválido para timer (seq=" << pkt.seqNum << ")" << endl;
-        sendPacket(pkt, dest);
-        return;
+    if (!timers.count(pkt.seqNum)) {
+        timers.emplace(pkt.seqNum, Timer{});
+        timers[pkt.seqNum].start(timeoutMs, [this, pkt, dest]() {
+            cout << "[ChromaServer] Timeout seq "
+                 << static_cast<int>(pkt.seqNum) << " → retransmitindo" << endl;
+            sendPacket(pkt, dest);
+        });
     }
-
-    timers[idx].start(timeoutMs, [this, pkt, dest]() {
-        cout << "Timeout seq " << pkt.seqNum << " -> retransmitindo" << endl;
-        sendPacket(pkt, dest);
-    });
-
     sendPacket(pkt, dest);
 }
 
 Packet ChromaServer::makeMetaDataPacket(const string& filename, ifstream& file, size_t chunkSize) {
-    // Nome curto do arquivo
     string pathStr(filename);
     size_t lastSlash = pathStr.find_last_of("/\\");
     string shortFilename = (lastSlash == string::npos) ? pathStr : pathStr.substr(lastSlash + 1);
 
-    // Extensão
-    string extension = "desconhecido";
+    string extension = "bin";
     size_t lastDot = shortFilename.find_last_of(".");
     if (lastDot != string::npos) {
-        extension = shortFilename.substr(lastDot);
+        extension = shortFilename.substr(lastDot + 1);
     }
 
-    // Tamanho do arquivo
     file.seekg(0, ios::end);
     long long fileSize = file.tellg();
     file.seekg(0, ios::beg);
 
-    int totalPackets = static_cast<int>(ceil(static_cast<double>(fileSize) / chunkSize));
+    int totalPackets = static_cast<int>(ceil((double)fileSize / chunkSize));
 
     vector<char> meta;
     auto appendStr = [&](const string& s) {
@@ -173,5 +166,5 @@ Packet ChromaServer::makeMetaDataPacket(const string& filename, ifstream& file, 
     appendStr(to_string(fileSize));
     appendStr(to_string(totalPackets));
 
-    return Packet(0, meta, ChromaFlag::ACK, addr);
+    return Packet(0, meta, ChromaFlag::META, addr);
 }

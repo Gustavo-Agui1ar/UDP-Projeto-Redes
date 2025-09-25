@@ -5,8 +5,7 @@
 
 int main() {
 
-
-    ChromaClient client(5, 10000);
+    ChromaClient client(WINDOW_SIZE);
     client.connectToServer("127.0.0.1", 8080);
     
     std::string filename;

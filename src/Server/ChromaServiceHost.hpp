@@ -11,7 +11,7 @@ private:
     int limitConnections;
 
 public:
-    ChromaServiceHost(int winSize, int bufSize, int port = 8080);
+    ChromaServiceHost(int winSize, int port = 8080);
     ~ChromaServiceHost();
 
     void start();

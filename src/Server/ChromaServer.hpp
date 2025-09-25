@@ -9,7 +9,7 @@
 
 class ChromaServer : public ChromaProtocol {
 public:
-    ChromaServer(int winSize, int bufSize, const sockaddr_in& clientAddr);
+    ChromaServer(int winSize, const sockaddr_in& clientAddr);
     ~ChromaServer();
 
     void sendData(const char* filename, size_t chunkSize = 512);
@@ -22,5 +22,5 @@ public:
 
 private:
     sockaddr_in clientAddr{};     
-    std::vector<Timer> timers;
+    std::map<uint8_t, Timer> timers;
 };

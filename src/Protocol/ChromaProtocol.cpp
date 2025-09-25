@@ -6,14 +6,17 @@
 #include <stdexcept>
 #include <vector>
 
-ChromaProtocol::ChromaProtocol(int winSize, int bufSize) 
-    : windowSize(winSize), bufferSize(bufSize), base(0), nextSeqNum(0), sendBuffer(bufSize) 
+ChromaProtocol::ChromaProtocol(int winSize)
+    : windowSize(winSize), bufferSize(BUFFER_SIZE), base(0), nextSeqNum(0)
 {
+    if(winSize <= 0 || winSize > BUFFER_SIZE/2 - 1) {
+        throw std::invalid_argument("Tamanho da janela inválido");
+    }
+   
     sockfd = ::socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0) {
         throw std::runtime_error("Erro ao criar socket: " + std::string(std::strerror(errno)));
     }
-
     std::cout << "[ChromaProtocol] Socket criado com sucesso (fd=" << sockfd << ")\n";
     std::memset(&addr, 0, sizeof(addr));
 }
@@ -38,22 +41,18 @@ ssize_t ChromaProtocol::sendPacket(const Packet& pkt, const sockaddr_in& dest) {
 ssize_t ChromaProtocol::recvPacket(Packet& pkt) {
     std::vector<char> buffer(UDP_MAX_PAYLOAD);
     socklen_t addrLen = sizeof(pkt.srcAddr);
-
-    ssize_t received = ::recvfrom(sockfd, buffer.data(), buffer.size(), 0, reinterpret_cast<sockaddr*>(&pkt.srcAddr), &addrLen);
+    ssize_t received = ::recvfrom(sockfd, buffer.data(), buffer.size(), 0,
+                                  reinterpret_cast<sockaddr*>(&pkt.srcAddr), &addrLen);
     if (received <= 0) {
-        if (received < 0) {
-            std::cerr << "[ChromaProtocol] Erro em recvfrom(): " << std::strerror(errno) << "\n";
-        }
         return received;
     }
-
     try {
         pkt.deserialize({buffer.begin(), buffer.begin() + received}, pkt.srcAddr);
     } catch (const std::runtime_error& e) {
-        std::cerr << "[ChromaProtocol] Falha ao desserializar pacote: " << e.what() << " (bytes recebidos=" << received << ")\n";
+        std::cerr << "[ChromaProtocol] Falha ao desserializar pacote: " << e.what()
+                  << " (bytes recebidos=" << received << ")\n";
         return -1;
     }
-
     return received;
 }
 
@@ -61,10 +60,8 @@ bool ChromaProtocol::waitResponse(int timeoutSec) {
     fd_set fds;
     FD_ZERO(&fds);
     FD_SET(sockfd, &fds);
-
     timeval tv{timeoutSec, 0};
     int ret = ::select(sockfd + 1, &fds, nullptr, nullptr, &tv);
-
     if (ret < 0) {
         throw std::runtime_error("Erro em select(): " + std::string(std::strerror(errno)));
     }
