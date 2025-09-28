@@ -6,6 +6,13 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <unordered_map>
+#include <mutex>
+
+struct TimeoutEvent {
+    uint8_t seq;
+    sockaddr_in dest;
+};
 
 class ChromaServer : public ChromaProtocol {
 public:
@@ -17,6 +24,7 @@ public:
     void receiveData() override;
 
     Packet makeMetaDataPacket(const std::string& filename, std::ifstream& file, size_t chunkSize);
+    void processRetransmissions(int timeoutMs);
 
     void setTimerAndSendPacket(const Packet& pkt, int timeoutMs, const sockaddr_in& dest);
 
@@ -24,4 +32,6 @@ private:
     sockaddr_in clientAddr{};    
     static Timer scheduler;
     std::unordered_map<uint8_t, Timer::Id> timerHandles;
+    std::mutex m_mutex;
+    std::queue<TimeoutEvent> retransmitQueue;
 };

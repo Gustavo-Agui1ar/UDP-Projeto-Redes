@@ -92,9 +92,15 @@ void ChromaClient::receiveData() {
     while (!transmissionEnded) {
         Packet pkt;
 
-        if (!waitResponse(10) || recvPacket(pkt) <= 0) {
-            logErr("Timeout ou erro de recepção.");
-            break;
+       if (!waitResponse(10) || recvPacket(pkt) <= 0) {
+            if (bytesReceived >= fileSize) {
+                logMsg("Timeout, mas já recebemos todo o arquivo. Encerrando.", YELLOW);
+                transmissionEnded = true;
+                break;
+            } else {
+                logErr("Timeout sem receber todos os pacotes. Tentando mais...");
+                continue; 
+            }
         }
 
         if (isCorrupted(pkt)) {
@@ -139,8 +145,12 @@ void ChromaClient::receiveData() {
             }
             
             case ChromaFlag::END:
-                logMsg("Fim de transmissão.", GREEN);
-                transmissionEnded = true;
+                logMsg("Fim de transmissão recebido.", GREEN);
+                if (packetsReceivedCount >= totalPackets || bytesReceived >= fileSize) {
+                    transmissionEnded = true;
+                } else {
+                    logErr("Recebido END antes de completar todos os pacotes! Continuando até timeout...");
+                }
             break;
 
             case ChromaFlag::NACK:
@@ -155,8 +165,13 @@ void ChromaClient::receiveData() {
     }
 
     file.flush();
+    if (bytesReceived < fileSize) {
+        logErr("Arquivo incompleto! Recebido " + std::to_string(bytesReceived) +
+            " de " + std::to_string(fileSize) + " bytes.");
+    } else {
+        logMsg("Arquivo salvo com sucesso!", GREEN);
+    }
     file.close();
-    logMsg("Arquivo salvo com sucesso!", GREEN);
 }
 
 void ChromaClient::readFileMetadata(const Packet& pkt) {
