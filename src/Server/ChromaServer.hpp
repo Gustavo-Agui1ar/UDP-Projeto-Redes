@@ -21,6 +21,7 @@ public:
     void setTimerAndSendPacket(const Packet& pkt, int timeoutMs, const sockaddr_in& dest);
 
 private:
-    sockaddr_in clientAddr{};     
-    std::map<uint8_t, Timer> timers;
+    sockaddr_in clientAddr{};    
+    static Timer scheduler;
+    std::unordered_map<uint8_t, Timer::Id> timerHandles;
 };

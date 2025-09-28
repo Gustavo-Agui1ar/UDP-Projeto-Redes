@@ -4,58 +4,98 @@
 #include <thread>
 #include <functional>
 #include <chrono>
-#include <utility>
+#include <queue>
+#include <mutex>
+#include <condition_variable>
+#include <vector>
+#include <unordered_set>
+#include <cstdint>
 
 class Timer {
+public:
+    using Clock = std::chrono::steady_clock;
+    using TimePoint = Clock::time_point;
+    using Callback = std::function<void()>;
+    using Id = uint64_t;
+
 private:
+    struct Task {
+        TimePoint expiry;
+        Id id;
+        Callback cb;
+        bool operator>(Task const& o) const { return expiry > o.expiry; }
+    };
+
+    std::priority_queue<Task, std::vector<Task>, std::greater<Task>> pq;
+    std::mutex mtx;
+    std::condition_variable cv;
+    std::thread worker;
     std::atomic<bool> running{false};
-    std::thread worker{};
+    std::atomic<Id> nextId{1};
+    std::unordered_set<Id> cancelled;
 
 public:
-    Timer() = default;
-
-    Timer(const Timer&) = delete;
-    Timer& operator=(const Timer&) = delete;
-
-    Timer(Timer&& other) noexcept {
-        running = other.running.load();
-        if (other.worker.joinable()) {
-            worker = std::move(other.worker);
-        }
-        other.running = false;
-    }
-
-    Timer& operator=(Timer&& other) noexcept {
-        if (this != &other) {
-            stop();
-            running = other.running.load();
-            if (other.worker.joinable()) {
-                worker = std::move(other.worker);
-            }
-            other.running = false;
-        }
-        return *this;
+    Timer() {
+        running = true;
+        worker = std::thread([this]() { loop(); });
     }
 
     ~Timer() {
         stop();
     }
 
-    void start(int intervalMs, std::function<void()> callback) {
-        stop();
-        running = true;
-        worker = std::thread([=]() mutable {
-            while (running) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(intervalMs));
-                if (running) callback();
-            }
-        });
+    Id addTimeout(int intervalMs, Callback cb) {
+        auto id = nextId.fetch_add(1, std::memory_order_relaxed);
+        Task t{Clock::now() + std::chrono::milliseconds(intervalMs), id, std::move(cb)};
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            pq.push(std::move(t));
+        }
+        cv.notify_one();
+        return id;
+    }
+
+    void cancel(Id id) {
+        std::lock_guard<std::mutex> lock(mtx);
+        cancelled.insert(id);
+        cv.notify_one();
     }
 
     void stop() {
         running = false;
-        if (worker.joinable()) {
-            worker.join();
+        cv.notify_all();
+        if (worker.joinable()) worker.join();
+    }
+
+private:
+    void loop() {
+        std::unique_lock<std::mutex> lock(mtx);
+        while (running) {
+            if (pq.empty()) {
+                cv.wait(lock, [&]() { return !running || !pq.empty(); });
+                continue;
+            }
+
+            auto now = Clock::now();
+            auto &t = pq.top();
+            if (t.expiry <= now) {
+                Task task = std::move(const_cast<Task&>(t));
+                Id id = task.id;
+                pq.pop();
+
+                if (cancelled.erase(id)) {
+                    continue;
+                }
+
+                lock.unlock();
+                try {
+                    task.cb();
+                } catch (...) {
+                }
+                lock.lock();
+            } else {
+                cv.wait_until(lock, t.expiry);
+            }
         }
     }
 };

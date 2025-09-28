@@ -6,6 +6,8 @@
 
 using namespace std;
 
+Timer ChromaServer::scheduler;
+
 ChromaServer::ChromaServer(int winSize, const sockaddr_in& clientAddr)
     : ChromaProtocol(winSize), clientAddr(clientAddr)
 {
@@ -26,23 +28,23 @@ ChromaServer::ChromaServer(int winSize, const sockaddr_in& clientAddr)
     }
 
     cout << "[ChromaServer] Rodando na porta " << ntohs(addr.sin_port)
-         << " | IP: " << inet_ntoa(addr.sin_addr) << endl;
+         << " | IP: " << inet_ntoa(addr.sin_addr) << "\n";
 }
 
 ChromaServer::~ChromaServer() {
-    cout << "[ChromaServer] Encerrando servidor, limpando timers..." << endl;
-    timers.clear();
+    cout << "[ChromaServer] Encerrando servidor, limpando timers..." << "\n";
+    timerHandles.clear();
 }
 
 void ChromaServer::sendData(const char* filename, size_t chunkSize) {
     if (chunkSize == 0 || chunkSize > CHROMA_MAX_DATA) {
-        cerr << "[ChromaServer] chunkSize inválido. Ajustando para " << CHROMA_MAX_DATA << endl;
+        cerr << "[ChromaServer] chunkSize inválido. Ajustando para " << CHROMA_MAX_DATA << "\n";
         chunkSize = CHROMA_MAX_DATA;
     }
 
     ifstream file(filename, ios::in | ios::binary);
     if (!file.is_open()) {
-        cerr << "[ChromaServer] Erro ao abrir arquivo: " << filename << endl;
+        cerr << "[ChromaServer] Erro ao abrir arquivo: " << filename << "\n";
         Packet nack(0, {}, ChromaFlag::NACK, addr);
         sendPacket(nack, clientAddr);
         return;
@@ -52,13 +54,13 @@ void ChromaServer::sendData(const char* filename, size_t chunkSize) {
     sendPacket(meta, clientAddr);
 
     if (!waitResponse(5)) {
-        cerr << "[ChromaServer] Timeout aguardando ACK de metadados." << endl;
+        cerr << "[ChromaServer] Timeout aguardando ACK de metadados." << "\n";
         return;
     }
 
     Packet ackMeta;
     if (recvPacket(ackMeta) <= 0 || ackMeta.flag != ChromaFlag::ACK || isCorrupted(ackMeta)) {
-        cerr << "[ChromaServer] Falha ao receber ACK válido de metadados." << endl;
+        cerr << "[ChromaServer] Falha ao receber ACK válido de metadados." << "\n";
         return;
     }
 
@@ -76,7 +78,7 @@ void ChromaServer::sendData(const char* filename, size_t chunkSize) {
                 bufferPackets[pkt.seqNum] = pkt;
 
                 cout << "[ChromaServer] Enviando pacote "
-                     << static_cast<int>(pkt.seqNum) << " (" << bytesRead << " bytes)" << endl;
+                     << static_cast<int>(pkt.seqNum) << " (" << bytesRead << " bytes)" << "\n";
 
                 setTimerAndSendPacket(pkt, 200, clientAddr);
                 nextSeqNum++;
@@ -93,50 +95,73 @@ void ChromaServer::sendData(const char* filename, size_t chunkSize) {
     // Pacote final com flag de encerramento
     Packet endPkt(0, {}, ChromaFlag::END, addr);
     sendPacket(endPkt, clientAddr);
-    cout << "[ChromaServer] Arquivo enviado com sucesso!" << endl;
+    cout << "[ChromaServer] Arquivo enviado com sucesso!" << "\n";
 }
 
 void ChromaServer::receiveData() {
     Packet pkt;
-    while (recvPacket(pkt) > 0) {
+    using Clock = std::chrono::high_resolution_clock;
+    while (true) {
+        int r = recvPacket(pkt);
+        if (r <= 0) break;
+
         if (isCorrupted(pkt)) {
-            cerr << "[ChromaServer] Pacote corrompido ignorado." << endl;
+            std::cerr << "[ChromaServer] Pacote corrompido ignorado.\n";
             continue;
         }
 
         if (pkt.flag == ChromaFlag::ACK) {
-            int seq = static_cast<int>(pkt.seqNum);
-            cout << "[ChromaServer] ACK recebido para seq " << seq << endl;
+            uint8_t seq = pkt.seqNum;
+            std::cerr << "[ChromaServer] ACK recebido para seq " << (int)seq << "\n";
 
-            if (timers.count(pkt.seqNum)) {
-                timers[pkt.seqNum].stop();
-                timers.erase(pkt.seqNum);
+            if (timerHandles.count(seq)) {
+                scheduler.cancel(timerHandles[seq]);
+                timerHandles.erase(seq);
             }
 
-            if (pkt.seqNum == base) {
-                while (bufferPackets.count(base)) {
-                    bufferPackets.erase(base);
-                    base++;
-                }
+            if (bufferPackets.count(seq)) {
+                bufferPackets.erase(seq);
+            }
+
+            auto seqLess = [](uint8_t a, uint8_t b) -> bool {
+                (void)a; (void)b; return false;
+            };
+
+            while (base != nextSeqNum && !bufferPackets.count(base)) {
+                uint8_t old = base;
+                base = static_cast<uint8_t>((base + 1) % 256);
+                std::cerr << "[ChromaServer] Avançando base de " << (int)old << " para " << (int)base << "\n";
             }
         } else if (pkt.flag == ChromaFlag::NACK) {
-            cout << "[ChromaServer] NACK recebido para seq "
-                 << static_cast<int>(pkt.seqNum) << endl;
+            std::cout << "[ChromaServer] NACK recebido para seq " << static_cast<int>(pkt.seqNum) << "\n";
         }
     }
 }
 
+
+
 void ChromaServer::setTimerAndSendPacket(const Packet& pkt, int timeoutMs, const sockaddr_in& dest) {
-    if (!timers.count(pkt.seqNum)) {
-        timers.emplace(pkt.seqNum, Timer{});
-        timers[pkt.seqNum].start(timeoutMs, [this, pkt, dest]() {
-            cout << "[ChromaServer] Timeout seq "
-                 << static_cast<int>(pkt.seqNum) << " → retransmitindo" << endl;
-            sendPacket(pkt, dest);
-        });
+    uint8_t seq = pkt.seqNum;
+
+    if (timerHandles.count(seq)) {
+        scheduler.cancel(timerHandles[seq]);
+        timerHandles.erase(seq);
     }
+
+    Timer::Id id = scheduler.addTimeout(timeoutMs, [this, seq, dest, timeoutMs]() {
+        if (!bufferPackets.count(seq)) {
+            return;
+        }
+        std::cerr << "[ChromaServer] Timeout -> retransmitindo seq " << (int)seq << "\n";
+        sendPacket(bufferPackets[seq], dest);
+        setTimerAndSendPacket(bufferPackets[seq], timeoutMs, dest);
+    });
+
+    timerHandles[seq] = id;
+
     sendPacket(pkt, dest);
 }
+
 
 Packet ChromaServer::makeMetaDataPacket(const string& filename, ifstream& file, size_t chunkSize) {
     string pathStr(filename);
