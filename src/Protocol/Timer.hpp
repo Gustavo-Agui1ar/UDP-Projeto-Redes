@@ -10,13 +10,14 @@
 #include <vector>
 #include <unordered_set>
 #include <cstdint>
+#include <memory>
 
 class Timer {
 public:
-    using Clock = std::chrono::steady_clock;
+    using Clock     = std::chrono::steady_clock;
     using TimePoint = Clock::time_point;
-    using Callback = std::function<void()>;
-    using Id = uint64_t;
+    using Callback  = std::function<void()>;
+    using Id        = uint8_t;  // agora o seqnum é o ID
 
 private:
     struct Task {
@@ -31,7 +32,6 @@ private:
     std::condition_variable cv;
     std::thread worker;
     std::atomic<bool> running{false};
-    std::atomic<Id> nextId{1};
     std::unordered_set<Id> cancelled;
 
 public:
@@ -44,12 +44,32 @@ public:
         stop();
     }
 
-    Id addTimeout(int intervalMs, Callback cb) {
-        auto id = nextId.fetch_add(1, std::memory_order_relaxed);
+    void addTimeout(Id id, int intervalMs, Callback cb) {
         Task t{Clock::now() + std::chrono::milliseconds(intervalMs), id, std::move(cb)};
         {
             std::lock_guard<std::mutex> lock(mtx);
             pq.push(std::move(t));
+        }
+        cv.notify_one();
+    }
+
+    Id addRepeatingTimeout(Id id, int intervalMs, Callback userCb) {
+        auto wrapper = std::make_shared<Callback>();
+        *wrapper = [=, this]() {
+            userCb();
+
+            {
+                std::lock_guard<std::mutex> lock(mtx);
+                if (!cancelled.count(id) && running) {
+                    pq.push({Clock::now() + std::chrono::milliseconds(intervalMs), id, *wrapper});
+                    cv.notify_one();
+                }
+            }
+        };
+
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            pq.push({Clock::now() + std::chrono::milliseconds(intervalMs), id, *wrapper});
         }
         cv.notify_one();
         return id;

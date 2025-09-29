@@ -6,6 +6,15 @@
 
 using namespace std;
 
+#define GREEN   "\033[32m"
+#define YELLOW  "\033[33m"
+#define RED     "\033[31m"
+#define CYAN    "\033[36m"
+#define ORANGE  "\033[38;5;208m"
+#define BLUE    "\033[34m"
+#define MAGENTA "\033[35m"
+#define RESET   "\033[0m"
+
 Timer ChromaServer::scheduler;
 
 ChromaServer::ChromaServer(int winSize, const sockaddr_in& clientAddr)
@@ -27,24 +36,29 @@ ChromaServer::ChromaServer(int winSize, const sockaddr_in& clientAddr)
         throw runtime_error("Erro ao obter porta atribuída ao servidor");
     }
 
-    cout << "[ChromaServer] Rodando na porta " << ntohs(addr.sin_port)
-         << " | IP: " << inet_ntoa(addr.sin_addr) << "\n";
+    cout << CYAN << "[ChromaServer] 🚀 Rodando na porta "
+         << ntohs(addr.sin_port)
+         << " | IP: " << inet_ntoa(addr.sin_addr) 
+         << RESET << "\n";
 }
 
 ChromaServer::~ChromaServer() {
-    cout << "[ChromaServer] Encerrando servidor, limpando timers..." << "\n";
-    timerHandles.clear();
+    cout << CYAN << "[ChromaServer] Encerrando servidor, limpando timers..."
+         << RESET << "\n";
+    scheduler.stop();
 }
 
 void ChromaServer::sendData(const char* filename, size_t chunkSize) {
     if (chunkSize == 0 || chunkSize > CHROMA_MAX_DATA) {
-        cerr << "[ChromaServer] chunkSize inválido. Ajustando para " << CHROMA_MAX_DATA << "\n";
+        cerr << YELLOW << "[ChromaServer] chunkSize inválido. Ajustando para "
+             << CHROMA_MAX_DATA << RESET << "\n";
         chunkSize = CHROMA_MAX_DATA;
     }
 
     ifstream file(filename, ios::in | ios::binary);
     if (!file.is_open()) {
-        cerr << "[ChromaServer] Erro ao abrir arquivo: " << filename << "\n";
+        cerr << RED << "[ChromaServer] Erro ao abrir arquivo: "
+             << filename << RESET << "\n";
         Packet nack(0, {}, ChromaFlag::NACK, addr);
         sendPacket(nack, clientAddr);
         return;
@@ -54,13 +68,15 @@ void ChromaServer::sendData(const char* filename, size_t chunkSize) {
     sendPacket(meta, clientAddr);
 
     if (!waitResponse(5)) {
-        cerr << "[ChromaServer] Timeout aguardando ACK de metadados." << "\n";
+        cerr << RED << "[ChromaServer] Timeout aguardando ACK de metadados."
+             << RESET << "\n";
         return;
     }
 
     Packet ackMeta;
     if (recvPacket(ackMeta) <= 0 || ackMeta.flag != ChromaFlag::ACK || isCorrupted(ackMeta)) {
-        cerr << "[ChromaServer] Falha ao receber ACK válido de metadados." << "\n";
+        cerr << RED << "[ChromaServer] Falha ao receber ACK válido de metadados."
+             << RESET << "\n";
         return;
     }
 
@@ -72,14 +88,18 @@ void ChromaServer::sendData(const char* filename, size_t chunkSize) {
             streamsize bytesRead = file.gcount();
 
             if (bytesRead > 0) {
-                Packet pkt(static_cast<uint8_t>(nextSeqNum), std::vector<char>(buffer.begin(), buffer.begin() + bytesRead), ChromaFlag::DATA, addr);
+                Packet pkt(static_cast<uint8_t>(nextSeqNum),
+                           std::vector<char>(buffer.begin(), buffer.begin() + bytesRead),
+                           ChromaFlag::DATA, addr);
                 {
                     std::lock_guard<std::mutex> lock(m_mutex);
                     bufferPackets[pkt.seqNum] = pkt;
                 }
 
-                cout << "[ChromaServer] Enviando pacote "
-                     << static_cast<int>(pkt.seqNum) << " (" << bytesRead << " bytes)\n";
+                cout << GREEN << "[ChromaServer] Enviando pacote "
+                     << static_cast<int>(pkt.seqNum)
+                     << " (" << bytesRead << " bytes)"
+                     << RESET << "\n";
 
                 setTimerAndSendPacket(pkt, 200, clientAddr);
                 nextSeqNum++;
@@ -89,7 +109,6 @@ void ChromaServer::sendData(const char* filename, size_t chunkSize) {
         }
 
         receiveData();
-        processRetransmissions(200);
     }
 
     file.close();
@@ -97,7 +116,8 @@ void ChromaServer::sendData(const char* filename, size_t chunkSize) {
     // Pacote final com flag de encerramento
     Packet endPkt(0, {}, ChromaFlag::END, addr);
     sendPacket(endPkt, clientAddr);
-    cout << "[ChromaServer] Arquivo enviado com sucesso!" << "\n";
+    cout << BLUE << "[ChromaServer] Arquivo enviado com sucesso!" 
+         << RESET << "\n";
 }
 
 void ChromaServer::receiveData() {
@@ -108,7 +128,8 @@ void ChromaServer::receiveData() {
         if (r <= 0) break; 
 
         if (isCorrupted(pkt)) {
-            std::cerr << "[ChromaServer] Pacote corrompido ignorado.\n";
+            cerr << RED << "[ChromaServer] Pacote corrompido ignorado."
+                 << RESET << "\n";
             continue;
         }
 
@@ -116,80 +137,48 @@ void ChromaServer::receiveData() {
             std::lock_guard<std::mutex> lock(m_mutex);
 
             uint8_t seq = pkt.seqNum;
-            std::cerr << "[ChromaServer] ACK recebido para seq " << (int)seq << "\n";
+            cerr << YELLOW << "[ChromaServer] ACK recebido para seq "
+                << (int)seq << RESET << "\n";
 
-            auto itTimer = timerHandles.find(seq);
-            if (itTimer != timerHandles.end()) {
-                scheduler.cancel(itTimer->second);
-                timerHandles.erase(itTimer);
-            }
+            scheduler.cancel(seq);   
+            size_t erased = bufferPackets.erase(seq);
 
-            bufferPackets.erase(seq);
-
+            uint8_t oldBase = base;
             while (base != nextSeqNum && bufferPackets.find(base) == bufferPackets.end()) {
-                uint8_t old = base;
                 base = static_cast<uint8_t>((base + 1) % 256);
+            }
+            if (oldBase != base) {
+                cerr << "[DEBUG] base avançou de " << (int)oldBase 
+                    << " para " << (int)base << "\n";
             }
         } 
         else if (pkt.flag == ChromaFlag::NACK) {
-            std::cout << "[ChromaServer] NACK recebido para seq "
-                      << static_cast<int>(pkt.seqNum) << "\n";
+            cout << ORANGE << "[ChromaServer] NACK recebido para seq "
+                << static_cast<int>(pkt.seqNum) << RESET << "\n";
         }
+
     }
 }
-
-
-
 
 void ChromaServer::setTimerAndSendPacket(const Packet& pkt, int timeoutMs, const sockaddr_in& dest) {
     uint8_t seq = pkt.seqNum;
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-
-        if (timerHandles.count(seq)) {
-            scheduler.cancel(timerHandles[seq]);
-            timerHandles.erase(seq);
-        }
-
-        auto callback = [this, seq, dest]() {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            if (bufferPackets.count(seq)) {
-                retransmitQueue.push({seq, dest});
-            }
-        };
-
-        timerHandles[seq] = scheduler.addTimeout(timeoutMs, callback);
-        bufferPackets[seq] = pkt; 
+        bufferPackets[seq] = pkt;
     }
+
+    auto callback = [this, seq, dest]() {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (bufferPackets.count(seq)) {
+            cerr << MAGENTA << "[ChromaServer] Timeout -> retransmitindo seq " << (int)seq << RESET << "\n";
+            sendPacket(bufferPackets[seq], dest);
+        }
+    };
+
+    scheduler.addRepeatingTimeout(seq, timeoutMs, callback);
 
     sendPacket(pkt, dest);
-}
-
-void ChromaServer::processRetransmissions(int timeoutMs) {
-    std::queue<TimeoutEvent> localQueue;
-
-    {  
-        std::lock_guard<std::mutex> lock(m_mutex);
-        std::swap(localQueue, retransmitQueue);
-    }
-
-    while (!localQueue.empty()) {
-        TimeoutEvent ev = localQueue.front();
-        localQueue.pop();
-
-        Packet pkt;
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            if (!bufferPackets.count(ev.seq)) continue; 
-            pkt = bufferPackets.at(ev.seq);
-        }
-
-        std::cerr << "[ChromaServer] Timeout -> retransmitindo seq " << (int)ev.seq << "\n";
-        sendPacket(pkt, ev.dest);
-
-        setTimerAndSendPacket(pkt, timeoutMs, ev.dest);
-    }
 }
 
 
