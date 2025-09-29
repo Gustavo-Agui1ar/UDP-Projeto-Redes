@@ -29,6 +29,6 @@ public:
 
 private:
     sockaddr_in clientAddr{};    
-    static Timer scheduler;
+    Timer scheduler;
     std::mutex m_mutex;
 };

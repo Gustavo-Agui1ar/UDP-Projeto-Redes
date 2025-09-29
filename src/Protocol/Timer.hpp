@@ -17,7 +17,7 @@ public:
     using Clock     = std::chrono::steady_clock;
     using TimePoint = Clock::time_point;
     using Callback  = std::function<void()>;
-    using Id        = uint8_t;  // agora o seqnum é o ID
+    using Id        = uint8_t;  
 
 private:
     struct Task {

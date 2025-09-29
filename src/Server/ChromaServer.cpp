@@ -15,10 +15,8 @@ using namespace std;
 #define MAGENTA "\033[35m"
 #define RESET   "\033[0m"
 
-Timer ChromaServer::scheduler;
-
 ChromaServer::ChromaServer(int winSize, const sockaddr_in& clientAddr)
-    : ChromaProtocol(winSize), clientAddr(clientAddr)
+    : ChromaProtocol(winSize), clientAddr(clientAddr), scheduler()
 {
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
@@ -36,7 +34,7 @@ ChromaServer::ChromaServer(int winSize, const sockaddr_in& clientAddr)
         throw runtime_error("Erro ao obter porta atribuída ao servidor");
     }
 
-    cout << CYAN << "[ChromaServer] 🚀 Rodando na porta "
+    cout << CYAN << "[ChromaServer] Rodando na porta "
          << ntohs(addr.sin_port)
          << " | IP: " << inet_ntoa(addr.sin_addr) 
          << RESET << "\n";
