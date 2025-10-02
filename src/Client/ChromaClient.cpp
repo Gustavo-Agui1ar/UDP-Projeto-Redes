@@ -71,13 +71,12 @@ void ChromaClient::sendData(const char* data, size_t len) {
             }
             else if (pkt.flag == ChromaFlag::NACK) {
                 std::string errMsg(pkt.data.begin(), pkt.data.end());
-                logMsg("Servidor respondeu com erro: " + errMsg);
-                retries = 0;
-            }
-            else {
-                logMsg("Falha ao estabelecer contato com o servidor");
+                logMsg("Servidor respondeu com erro: " + errMsg, RED);
+                return;                
             }
         }
+        logMsg("Falha ao estabelecer contato com o servidor", RED);
+        
         sendPacket(request, serverAddr);
     }
 }
