@@ -55,10 +55,13 @@ void ChromaServer::sendData(const char* filename, size_t chunkSize) {
 
     ifstream file(filename, ios::in | ios::binary);
     if (!file.is_open()) {
-        cerr << RED << "[ChromaServer] Erro ao abrir arquivo: "
-             << filename << RESET << "\n";
-        Packet nack(0, {}, ChromaFlag::NACK, addr);
+        std::string errMsg = "erro ao abrir arquivo com nome incorreto ou inexistente";
+        std::vector<char> errMsgVec(errMsg.begin(), errMsg.end());
+
+        Packet nack(0, errMsgVec, ChromaFlag::NACK, addr);
         sendPacket(nack, clientAddr);
+
+        cerr << RED << "[ChromaServer] " << errMsg << RESET << "\n";
         return;
     }
 

@@ -69,11 +69,17 @@ void ChromaClient::sendData(const char* data, size_t len) {
                 receiveData();
                 return;
             }
+            else if (pkt.flag == ChromaFlag::NACK) {
+                std::string errMsg(pkt.data.begin(), pkt.data.end());
+                logMsg("Servidor respondeu com erro: " + errMsg);
+                retries = 0;
+            }
+            else {
+                logMsg("Falha ao estabelecer contato com o servidor");
+            }
         }
-        logErr("Falha ao estabelecer contato inicial, tentando novamente...");
         sendPacket(request, serverAddr);
     }
-    logErr("Falha ao tentar se comunicar com o servidor após múltiplas tentativas.");
 }
 
 void ChromaClient::receiveData() {
@@ -210,8 +216,8 @@ void ChromaClient::printProgress(long long bytesSent, long long fileSize,
     // Desenha barra
     std::cout << "[Progresso] [";
     for (int i = 0; i < barWidth; ++i) {
-        if (i < pos) std::cout << "=";
-        else if (i == pos) std::cout << ">";
+        if (i < pos) std::cout << GREEN << "=" << "\033[0m";
+        else if (i == pos) std::cout << GREEN << ">" << "\33[0m";
         else std::cout << " ";
     }
     std::cout << "] "

@@ -55,7 +55,7 @@ void ChromaServiceHost::CreateServer(const char* ip, Packet pkt) {
         {
             ChromaServer server(windowSize, pkt.srcAddr);
 
-            server.sendData(std::string(pkt.data.begin(), pkt.data.end()).c_str(), 1000);
+            server.sendData(std::string(pkt.data.begin(), pkt.data.end()).c_str(), 2000);
 
         } catch (const std::exception& e)
         {
